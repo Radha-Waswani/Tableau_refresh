@@ -1,5 +1,4 @@
 import os
-import datetime
 # Database configurations
 WAREHOUSE = 'ITPYTHON_WH'
 databasename = 'POWERDB_DEV'

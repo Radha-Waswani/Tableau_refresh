@@ -6,11 +6,8 @@ Created on Sun Sep 13 22:08:26 2020
 
 
 """
-# from matplotlib import image
-# import requests
 import os
 import logging
-# import sys
 from datetime import datetime,timedelta
 import numpy as np
 import pandas as pd
@@ -53,14 +50,29 @@ def extract_tableau_pdf(token_name, token_secret, projectid, viewname_list):
     
         # Getting all of the views on the server
         viewname_list_1 = []
-        # project = []
-        # name =[]
         for viewname in viewname_list:
             for v in TSC.Pager(server.views):
-                if v.project_id == projectid and v.name == viewname:
-                    # datasource_id = v.id
-                    # resource = server.datasources.get_by_id(datasource_id)
-                    # server.datasources.refresh(resource)
+                if v.project_id == projectid and v.name.strip() == viewname:
+                    # Getting workbook ids to refresh tableau reports with type EXTRACT
+                    workbook = server.workbooks.get_by_id(v.workbook_id)
+                    try:
+                        # Here all EMBEDDED_EXTRACTS reports will be refreshed and will go in except block for SEPARATELY_PUBLISHED
+                        if "EXT" in workbook.name:
+                            server.workbooks.refresh(workbook)
+                    except:
+                        datasources,pagination = server.datasources.get()
+                        server.workbooks.populate_connections(workbook)
+                        extract_name = [connection.datasource_name for connection in workbook.connections]
+                        for d in datasources:
+                            if d.has_extracts and d.name in extract_name:
+                                print(d.name in extract_name,d.name,extract_name)
+                                print(d.id)
+                                data_source = server.datasources.get_by_id(d.id)
+                                data_source.name
+                                server.datasources.refresh(data_source)
+                            else:
+                                pass
+                    # Capture refreshed image of tableau report
                     file_name, image_url = save_images(server,v,viewname) 
                     images_name_list.append(file_name)
                     url_list.append(image_url)
@@ -78,10 +90,6 @@ def save_images(server,view1,viewname):
     try:
         image_req_option = TSC.ImageRequestOptions(imageresolution=TSC.ImageRequestOptions.Resolution.High,maxage=100)
         file_name = f"{os.getcwd()}\\download\\test_{viewname.replace('/','_')}.png"
-        # image_req_option.vf("TRADE_DATE",(datetime.now()-timedelta(1)).strftime("%Y-%m-%d"))
-        image_req_option.vf("TRADE_DATE",(datetime.now()).strftime("%Y-%m-%d"))
-        logging.info(f"The current date(TRADE_DATE) is  {datetime.now().strftime('%Y-%m-%d')} for icesettle")
-        server.views.populate_image(view1,image_req_option)  
         server.views.populate_image(view1)    
         with open(file_name, 'wb') as f:
             f.write(view1.image)
@@ -117,7 +125,6 @@ def SendImageEmail(url_list, images_name_list,view_name,to_addr,log):
         auth = auth_rawtext.split('\n')[1]
         
         # Desired recipient of the email
-        # mailinglist = ["priyanka.solanki@biourja.com","radha.waswani@biourja.com","ayushi.joshi@biourja.com","devina.ligga@biourja.com","arghya.mondal@biourja.com"]
         mailinglist = ["arghya.mondal@biourja.com","indiapowerit@biourja.com"]
         # mailinglist = ["priyanka.solanki@biourja.com","radha.waswani@biourja.com"]
         # Signing into email
@@ -129,13 +136,10 @@ def SendImageEmail(url_list, images_name_list,view_name,to_addr,log):
         # msg["To"] = ", ".join(mailinglist)
         msg["To"] = to_addr
         msg["From"] = sender
-        # suject = viewname_list[0]+ "_LIVE_TABLEAU_REPORT"
-        # msg["Subject"]  = suject
         msg["Subject"] = tableau_email_subject
-        url_list_new = [url.split('views/')[1] for url in url_list]
-
         st = datetime.today().strftime('%m/%d/%Y')
         # st = (datetime.today()-timedelta(days=1)).strftime('%m/%d/%Y')
+
         # Email body
         url_list = '<br>'.join(url_list)
         body = f'''<html>  <font size="+.5"> Hello,<br> {tableau_email_subject} were released for {st} <br>{tableau_email_subject} LIVE report for {view_name} update on Tableau Server has been completed.<br> List of Live Report, view and image are attached.</font> <br>{url_list}<br>'''
@@ -224,9 +228,10 @@ if __name__ == "__main__":
 
         databasename = config.databasename
         schemaname = config.schemaname
+        table_tableau_refresh_details = config.table_tableau_refresh_details
         # Created global connection object
-        conn = get_connection(role='OWNER_{}'.format(config.databasename),
-                                database=config.databasename, schema=config.schemaname)
+        conn = get_connection(role='OWNER_{}'.format(databasename),
+                                database=databasename, schema=schemaname)
         cursor = conn.cursor() 
         # Call for create DDL to fecth streams data
         view_ddls = cursor.execute(f"select VIEW_DDL_FINAL from {databasename}.{schemaname}.{config.stream_ddl_create_vw}").fetchone()[0].replace('\n','') 
@@ -235,10 +240,10 @@ if __name__ == "__main__":
         records = cursor.execute(f"Insert into {databasename}.{schemaname}.{config.table_stream_log_dev} (select * from {databasename}.{schemaname}.{config.stream_ddl_store_vw})").fetchall() 
         # TABLEAU_REFRESH_VW contains logic to get average of last 5 days that will check for the range of data insertion
         # TABLEAU_REFRESH_DETAILS would be updated from TABLEAU_REFRESH_VW on view_name and statusdate basis
-        update_records = cursor.execute(f'Update {databasename}.{schemaname}.{config.table_tableau_refresh_details} A set a.FLAG=b.FLAG , a.DATETIME=CURRENT_TIMESTAMP from \
+        update_records = cursor.execute(f'Update {databasename}.{schemaname}.{table_tableau_refresh_details} A set a.FLAG=b.FLAG , a.DATETIME=CURRENT_TIMESTAMP from \
         {databasename}.{schemaname}.{config.tableau_refresh_vw} B where a.VIEW_NAME=b.TABLEAU_NAME and b.STATUSDATE=current_date').fetchall()
         # Code to check for 1 day back (lines 279-280)
-        # update_records = cursor.execute(f'Update {databasename}.{schemaname}.{config.table_tableau_refresh_details} A set a.FLAG=b.FLAG , a.DATETIME=current_date-1 from \
+        # update_records = cursor.execute(f'Update {databasename}.{schemaname}.{table_tableau_refresh_details} A set a.FLAG=b.FLAG , a.DATETIME=current_date-1 from \
         # {databasename}.{schemaname}.{config.tableau_refresh_vw} B where a.VIEW_NAME=b.TABLEAU_NAME and b.STATUSDATE=current_date-1').fetchall()
 
         
@@ -248,19 +253,19 @@ if __name__ == "__main__":
         if current_time.hour == 0 and current_time.minute in (0,1,2,3):
         # if current_time.hour == 8 and current_time.minute in (15,16,17,18):
             print("In if condition to set FLAG_TABLEAU_REFRESH = NULL for all reports")
-            records = update_tableau_refresh_on_daychange(cursor,config.table_tableau_refresh_details)
+            records = update_tableau_refresh_on_daychange(cursor,table_tableau_refresh_details)
             print("Length of records updated:::::::: ",len(records))
 
-        result = fetch_records_to_tableau_refresh(cursor,config.table_tableau_refresh_details)
+        result = fetch_records_to_tableau_refresh(cursor,table_tableau_refresh_details)
         df = pd.DataFrame(result)
-        for i,x in df.iterrows():
-            project_id =x[0]
-            view_name = x[1]
+        for i,row in df.iterrows():
+            project_id = row[0]
+            view_name = row[1]
             viewname_list =[view_name.replace('','')]
-            flag_true = x[4]
-            tableau_refresh =x[5]
-            table_datetime = x[6]
-            tableau_email_subject = x[7]
+            flag_true = row[4]
+            tableau_refresh =row[5]
+            table_datetime = row[6]
+            tableau_email_subject = row[7]
             
             if flag_true == 'TRUE' and  (tableau_refresh == 'NULL'or tableau_refresh == None) and table_datetime.date() == datetime.today().date() :
             # if flag_true == 'TRUE' and  (tableau_refesh == 'NULL'or tableau_refesh == None) and table_datetime.date() == (datetime.today()-timedelta(days=1)).date():
@@ -268,11 +273,11 @@ if __name__ == "__main__":
                 url_list,images_name_list,viewname_list= extract_tableau_pdf(token_name,token_secret, project_id, viewname_list)
                 logging.info('sending Image email for tableau refresh')
                 SendImageEmail(url_list, images_name_list,view_name,to_addr, log)
-                column_update = update_flag_tableau_refresh(view_name,cursor,config.table_tableau_refresh_details) 
+                column_update = update_flag_tableau_refresh(view_name,cursor,table_tableau_refresh_details)
         logging.info('Execution Done')
         bu_alerts.send_mail(
             receiver_email = to_addr,
-            mail_subject='JOB_SUCCESS - TABLEAU_REFRESH',
+            mail_subject='JOB SUCCESS - TABLEAU_REFRESH_DEV',
             mail_body='TABLEAU_REFRESH completed successfully',
             attachment_location = log_file_location
         )   
@@ -281,12 +286,12 @@ if __name__ == "__main__":
         logging.exception(f'Exception caught during execution: {e}')
         log_json = '[{"JOB_ID": "' + \
             str(job_id)+'","CURRENT_DATETIME": "'+str(datetime.now())+'"}]'
-        bu_alerts.bulog(process_name=config.PROCESS_NAME, database=config.DATABASE, status='Failed',
-                        table_name=config.TABLENAME, row_count=0, log=log_json, warehouse='QUANT_WH', process_owner=config.PROCESS_OWNER)
+        bu_alerts.bulog(process_name=config.PROCESS_NAME, database=databasename, status='Failed',
+                        table_name='', row_count=0, log=log_json, warehouse='', process_owner=credential_dict['IT_OWNER'])
         
         bu_alerts.send_mail(
             receiver_email = to_addr,
-            mail_subject='JOB_FAILED - TABLEAU_REFRESH',
+            mail_subject='JOB FAILED - TABLEAU_REFRESH_DEV',
             mail_body='TABLEAU_REFRESH failed during execution',
             attachment_location = log_file_location
         )
