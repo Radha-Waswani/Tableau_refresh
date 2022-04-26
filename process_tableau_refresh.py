@@ -125,8 +125,7 @@ def SendImageEmail(url_list, images_name_list,view_name,to_addr,log):
         auth = auth_rawtext.split('\n')[1]
         
         # Desired recipient of the email
-        mailinglist = ["arghya.mondal@biourja.com","indiapowerit@biourja.com"]
-        # mailinglist = ["priyanka.solanki@biourja.com","radha.waswani@biourja.com"]
+        mailinglist = to_addr.split(',')
         # Signing into email
         s = smtplib.SMTP(host='us-smtp-outbound-1.mimecast.com', port=587)
         s.starttls()
@@ -215,6 +214,8 @@ if __name__ == "__main__":
          # Get tableau credentials from BU_CONFIG_PARAMS table
         credential_dict =  get_config('TABLEAU_GENERIC_AUTO_REFRESH','TABLEAU_REFRESH_DETAILS') 
         api_key = credential_dict['API_KEY']
+        databasename = credential_dict['DATABASE']
+        schemaname = credential_dict['TABLE_SCHEMA']
         # project_id = api_key.split(';')[0]
         group = api_key.split(';')[1]
         # projectname = credential_dict['PROJECT_NAME']
@@ -223,12 +224,14 @@ if __name__ == "__main__":
         views_url = urls.split(';')[1]
         token_name =credential_dict['USERNAME']
         token_secret = credential_dict['PASSWORD']
-        to_addr = 'arghya.mondal@biourja.com,indiapowerit@biourja.com'
-        # to_addr = 'priyanka.solanki@biourja.com,radha.waswani@biourja.com'
-
-        databasename = config.databasename
-        schemaname = config.schemaname
+        to_addr = credential_dict['EMAIL_LIST']
+        # to_addr = 'arghya.mondal@biourja.com,indiapowerit@biourja.com'
+        process_name = credential_dict['PROJECT_NAME']
         table_tableau_refresh_details = config.table_tableau_refresh_details
+        log_json = '[{"JOB_ID": "' + \
+            str(job_id)+'","CURRENT_DATETIME": "'+str(datetime.now())+'"}]'
+        bu_alerts.bulog(process_name = process_name, database = databasename, status='Started',
+                        table_name='', row_count=0, log=log_json, warehouse='', process_owner = credential_dict['IT_OWNER'])
         # Created global connection object
         conn = get_connection(role='OWNER_{}'.format(databasename),
                                 database=databasename, schema=schemaname)
@@ -237,7 +240,7 @@ if __name__ == "__main__":
         view_ddls = cursor.execute(f"select VIEW_DDL_FINAL from {databasename}.{schemaname}.{config.stream_ddl_create_vw}").fetchone()[0].replace('\n','') 
         cursor.execute(view_ddls)
         # Fetch streams data, perform grouping of ACTION type and then insert into stream_log_dev table
-        records = cursor.execute(f"Insert into {databasename}.{schemaname}.{config.table_stream_log_dev} (select * from {databasename}.{schemaname}.{config.stream_ddl_store_vw})").fetchall() 
+        records = cursor.execute(f"Insert into {databasename}.{schemaname}.{config.table_stream_log} (select * from {databasename}.{schemaname}.{config.stream_ddl_store_vw})").fetchall()
         # TABLEAU_REFRESH_VW contains logic to get average of last 5 days that will check for the range of data insertion
         # TABLEAU_REFRESH_DETAILS would be updated from TABLEAU_REFRESH_VW on view_name and statusdate basis
         update_records = cursor.execute(f'Update {databasename}.{schemaname}.{table_tableau_refresh_details} A set a.FLAG=b.FLAG , a.DATETIME=CURRENT_TIMESTAMP from \
@@ -275,9 +278,12 @@ if __name__ == "__main__":
                 SendImageEmail(url_list, images_name_list,view_name,to_addr, log)
                 column_update = update_flag_tableau_refresh(view_name,cursor,table_tableau_refresh_details)
         logging.info('Execution Done')
+        log_json = '[{"JOB_ID": "' + str(job_id)+'","CURRENT_DATETIME": "'+str(datetime.now())+'"}]'
+        bu_alerts.bulog(process_name = process_name, database=databasename, status='Completed',
+                        table_name='', row_count=0, log=log_json, warehouse='', process_owner = credential_dict['IT_OWNER'])
         bu_alerts.send_mail(
             receiver_email = to_addr,
-            mail_subject='JOB SUCCESS - TABLEAU_REFRESH_DEV',
+            mail_subject='JOB SUCCESS - TABLEAU_REFRESH',
             mail_body='TABLEAU_REFRESH completed successfully',
             attachment_location = log_file_location
         )   
@@ -286,12 +292,12 @@ if __name__ == "__main__":
         logging.exception(f'Exception caught during execution: {e}')
         log_json = '[{"JOB_ID": "' + \
             str(job_id)+'","CURRENT_DATETIME": "'+str(datetime.now())+'"}]'
-        bu_alerts.bulog(process_name=config.PROCESS_NAME, database=databasename, status='Failed',
-                        table_name='', row_count=0, log=log_json, warehouse='', process_owner=credential_dict['IT_OWNER'])
+        bu_alerts.bulog(process_name = process_name, database=databasename, status='Failed',
+                        table_name='', row_count=0, log=log_json, warehouse='', process_owner = credential_dict['IT_OWNER'])
         
         bu_alerts.send_mail(
             receiver_email = to_addr,
-            mail_subject='JOB FAILED - TABLEAU_REFRESH_DEV',
+            mail_subject='JOB FAILED - TABLEAU_REFRESH',
             mail_body='TABLEAU_REFRESH failed during execution',
             attachment_location = log_file_location
         )
