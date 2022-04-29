@@ -1,12 +1,5 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Sun Sep 13 22:08:26 2020
-
-@author: Michael.Huang
-
-
-"""
 import os
+import requests
 import logging
 from datetime import datetime,timedelta
 import numpy as np
@@ -53,6 +46,9 @@ def extract_tableau_pdf(token_name, token_secret, projectid, viewname_list):
         for viewname in viewname_list:
             for v in TSC.Pager(server.views):
                 if v.project_id == projectid and v.name.strip() == viewname:
+                    image_url = views_url.format(v.content_url.replace('/sheets',''))
+                    image_url_1 = image_url+"?:refresh=y"
+                    requests.get(image_url_1)
                     # Getting workbook ids to refresh tableau reports with type EXTRACT
                     workbook = server.workbooks.get_by_id(v.workbook_id)
                     try:
@@ -225,7 +221,6 @@ if __name__ == "__main__":
         token_name =credential_dict['USERNAME']
         token_secret = credential_dict['PASSWORD']
         to_addr = credential_dict['EMAIL_LIST']
-        # to_addr = 'arghya.mondal@biourja.com,indiapowerit@biourja.com'
         process_name = credential_dict['PROJECT_NAME']
         table_tableau_refresh_details = config.table_tableau_refresh_details
         log_json = '[{"JOB_ID": "' + \
