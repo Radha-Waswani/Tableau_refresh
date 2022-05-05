@@ -16,7 +16,7 @@ import bu_alerts
 from bu_config import get_config
 from email.utils import make_msgid
 import config as config
-
+import time
 
 
 def extract_tableau_pdf(token_name, token_secret, projectid, viewname_list):
@@ -47,7 +47,7 @@ def extract_tableau_pdf(token_name, token_secret, projectid, viewname_list):
             for v in TSC.Pager(server.views):
                 if v.project_id == projectid and v.name.strip() == viewname:
                     image_url = views_url.format(v.content_url.replace('/sheets',''))
-                    image_url_1 = image_url+"?:refresh=y"
+                    image_url_1 = f'''{image_url}?:refresh=y'''
                     requests.get(image_url_1)
                     # Getting workbook ids to refresh tableau reports with type EXTRACT
                     workbook = server.workbooks.get_by_id(v.workbook_id)
@@ -65,7 +65,19 @@ def extract_tableau_pdf(token_name, token_secret, projectid, viewname_list):
                                 print(d.id)
                                 data_source = server.datasources.get_by_id(d.id)
                                 data_source.name
-                                server.datasources.refresh(data_source)
+                                k=0
+                                job= server.datasources.refresh(data_source)
+                                while(k==0 or (res.finish_code == -1 )):
+                                    res = server.jobs.get_by_id(job.id)
+                                    print(res)
+                                    # time.sleep(300)
+                                    if(res.progress== '100' and res.finish_code==0):
+                                        print(res)
+                                        break                 
+                                    time.sleep(300)
+                                    # server = TSC.Server(tableau_url, use_server_version=True)
+                                    # server.auth.sign_in(tableau_auth) #sign in
+                                    k+=1
                             else:
                                 pass
                     # Capture refreshed image of tableau report
@@ -97,7 +109,7 @@ def save_images(server,view1,viewname):
         print(f"Exception caught during save_images execution {e}")
         logging.info(f"Exception caught during save_images execution {e}")
 
-def SendImageEmail(url_list, images_name_list,view_name,to_addr,log):
+def SendImageEmail(url_list,images_name_list,view_name,power_receiver_mail,log):
     """
     Sends an email with desired image
 
@@ -121,7 +133,7 @@ def SendImageEmail(url_list, images_name_list,view_name,to_addr,log):
         auth = auth_rawtext.split('\n')[1]
         
         # Desired recipient of the email
-        mailinglist = to_addr.split(',')
+        mailinglist = power_receiver_mail.split(',')
         # Signing into email
         s = smtplib.SMTP(host='us-smtp-outbound-1.mimecast.com', port=587)
         s.starttls()
@@ -129,7 +141,7 @@ def SendImageEmail(url_list, images_name_list,view_name,to_addr,log):
         msg = MIMEMultipart()        
         # Email details
         # msg["To"] = ", ".join(mailinglist)
-        msg["To"] = to_addr
+        msg["To"] = power_receiver_mail
         msg["From"] = sender
         msg["Subject"] = tableau_email_subject
         st = datetime.today().strftime('%m/%d/%Y')
@@ -137,7 +149,7 @@ def SendImageEmail(url_list, images_name_list,view_name,to_addr,log):
 
         # Email body
         url_list = '<br>'.join(url_list)
-        body = f'''<html>  <font size="+.5"> Hello,<br> {tableau_email_subject} were released for {st} <br>{tableau_email_subject} LIVE report for {view_name} update on Tableau Server has been completed.<br> List of Live Report, view and image are attached.</font> <br>{url_list}<br>'''
+        body = f'''<html>  <font size="+.5"> Hello,<br> {tableau_email_subject} were released for {st} <br>{tableau_email_subject} report for {view_name} update on Tableau Server has been completed.<br> List of Report, view and image are attached.</font> <br>{url_list}<br>'''
         images_name_list = [x.replace("./", "") for x in images_name_list]
         for pdf in images_name_list:
             image_cid = make_msgid()
@@ -221,6 +233,8 @@ if __name__ == "__main__":
         token_name =credential_dict['USERNAME']
         token_secret = credential_dict['PASSWORD']
         to_addr = credential_dict['EMAIL_LIST']
+        power_receiver_mail = to_addr.split(';')[0]
+        receiver_mail = to_addr.split(';')[1]
         process_name = credential_dict['PROJECT_NAME']
         table_tableau_refresh_details = config.table_tableau_refresh_details
         log_json = '[{"JOB_ID": "' + \
@@ -264,20 +278,24 @@ if __name__ == "__main__":
             tableau_refresh =row[5]
             table_datetime = row[6]
             tableau_email_subject = row[7]
-            
-            if flag_true == 'TRUE' and  (tableau_refresh == 'NULL'or tableau_refresh == None) and table_datetime.date() == datetime.today().date() :
-            # if flag_true == 'TRUE' and  (tableau_refesh == 'NULL'or tableau_refesh == None) and table_datetime.date() == (datetime.today()-timedelta(days=1)).date():
-                logging.info('Function for extract tableau pdf')
-                url_list,images_name_list,viewname_list= extract_tableau_pdf(token_name,token_secret, project_id, viewname_list)
-                logging.info('sending Image email for tableau refresh')
-                SendImageEmail(url_list, images_name_list,view_name,to_addr, log)
-                column_update = update_flag_tableau_refresh(view_name,cursor,table_tableau_refresh_details)
+            # if (view_name == 'ISO Credit Summary' and current_time.hour > 8):
+            #     continue
+            if flag_true == 'TRUE' and  (tableau_refresh == 'NULL'or tableau_refresh == None) and table_datetime.date() == datetime.today().date():
+            # if flag_true == 'TRUE' and  (tableau_refresh == 'NULL'or tableau_refresh == None) and table_datetime.date() == (datetime.today()-timedelta(days=1)).date():
+                if (view_name == 'ISO Credit Summary' and current_time.hour < 8):
+                    pass
+                else:
+                    logging.info('Function for extract tableau pdf')
+                    url_list,images_name_list,viewname_list= extract_tableau_pdf(token_name,token_secret, project_id, viewname_list)
+                    logging.info('sending Image email for tableau refresh')
+                    SendImageEmail(url_list, images_name_list,view_name,power_receiver_mail,log)
+                    column_update = update_flag_tableau_refresh(view_name,cursor,table_tableau_refresh_details)
         logging.info('Execution Done')
         log_json = '[{"JOB_ID": "' + str(job_id)+'","CURRENT_DATETIME": "'+str(datetime.now())+'"}]'
         bu_alerts.bulog(process_name = process_name, database=databasename, status='Completed',
                         table_name='', row_count=0, log=log_json, warehouse='', process_owner = credential_dict['IT_OWNER'])
         bu_alerts.send_mail(
-            receiver_email = to_addr,
+            receiver_email = receiver_mail,
             mail_subject='JOB SUCCESS - TABLEAU_REFRESH',
             mail_body='TABLEAU_REFRESH completed successfully',
             attachment_location = log_file_location
@@ -291,7 +309,7 @@ if __name__ == "__main__":
                         table_name='', row_count=0, log=log_json, warehouse='', process_owner = credential_dict['IT_OWNER'])
         
         bu_alerts.send_mail(
-            receiver_email = to_addr,
+            receiver_email = receiver_mail,
             mail_subject='JOB FAILED - TABLEAU_REFRESH',
             mail_body='TABLEAU_REFRESH failed during execution',
             attachment_location = log_file_location
